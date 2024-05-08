@@ -1,4 +1,4 @@
-import torch.nn as nn
+`import torch.nn as nn
 import torch
 import math
 import time
@@ -15,6 +15,8 @@ import random
 from torch.autograd import Variable
 #from bbox_features import BoxFeatures
 from global_utils.resnet import ResNet
+import warnings 
+warnings.filterwarnings('ignore')
 
 
 
@@ -296,6 +298,8 @@ class ResNet_RetinaNet_RNN(nn.Module):
         if return_local_features:
             local_features = []
 
+        image_predict = torch.unsqueeze(image_predict, 0)
+
         for i in range(6):
             rnn_input = torch.cat((image_predict, verb_word, previous_word, roi_features), dim=1)
             hx, cx = self.rnn(rnn_input, (hx, cx))
@@ -362,7 +366,7 @@ class ResNet_RetinaNet_RNN(nn.Module):
         else:
             if return_local_features:
                 return verb, noun_predicts, bbox_predicts, bbox_exist_list, all_local_features
-
+            print(noun_predicts)
             return verb, noun_predicts, bbox_predicts, bbox_exist_list
 
 
@@ -390,26 +394,33 @@ class ResNet_RetinaNet_RNN(nn.Module):
 
         return bbox_exist, regression, classification, scores
 
-
-
     def get_local_features(self, features, boxes, picture_width, picture_height):
         features_heights = features.shape[3]
         features_width = features.shape[2]
         boxes_copy = boxes.clone()
-        boxes_copy[:, 0] = (boxes_copy[:, 0]*features_heights) / picture_height
-        boxes_copy[:, 2] = (boxes_copy[:, 2]*features_heights) / picture_height
-        boxes_copy[:, 1] = (boxes_copy[:, 1]*features_width) / picture_width
-        boxes_copy[:, 3] = (boxes_copy[:, 3]*features_width) / picture_width
-        batch = torch.arange(boxes_copy.shape[0]).unsqueeze(1).cuda().float()
-        box_input = torch.cat((batch, boxes_copy), dim=1)
+        boxes_copy[:, 0] = (boxes_copy[:, 0] * features_heights) / picture_height
+        boxes_copy[:, 2] = (boxes_copy[:, 2] * features_heights) / picture_height
+        boxes_copy[:, 1] = (boxes_copy[:, 1] * features_width) / picture_width
+        boxes_copy[:, 3] = (boxes_copy[:, 3] * features_width) / picture_width
+        
+        batch_indices = torch.arange(boxes_copy.shape[0]).unsqueeze(1).cuda().float()
+        box_input = torch.cat((batch_indices, boxes_copy), dim=1)
+        
         roi_align_output = ops.roi_align(features, box_input, (1,1)).squeeze()
-        roi_align_output[boxes[:, 0] == -1, :] = F.adaptive_avg_pool2d(features, (1,1)).squeeze()[boxes[:, 0] == -1, :]
-        roi_align_output= roi_align_output.squeeze()
 
-        if len(roi_align_output.shape) == 1:
+        global_avg_pooled = F.adaptive_avg_pool2d(features, (1,1)).squeeze()
+        
+        mask = (boxes[:, 0] == -1).squeeze()
+
+        mask_expanded = mask.unsqueeze(-1).expand_as(roi_align_output)
+        
+        roi_align_output[mask_expanded] = global_avg_pooled.expand_as(roi_align_output)[mask_expanded]
+        
+        if roi_align_output.ndim == 1:
             roi_align_output = roi_align_output.unsqueeze(0)
 
         return roi_align_output
+
 
     def _init_resnet(self, block, layers):
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -418,7 +429,7 @@ class ResNet_RetinaNet_RNN(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)P
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
         if block == BasicBlock:
@@ -481,4 +492,3 @@ def resnet50(num_classes, num_nouns, parser, pretrained=False, **kwargs):
         state_dict['fc.bias'] = x.bias
         model.load_state_dict(state_dict, strict=False)
     return model
-
